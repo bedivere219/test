@@ -49,22 +49,22 @@ jobs:
           mkdir -p ~/app
           cd ~/app
           
-          # 1. 기존 실행 중인 스프링 부트 프로세스들 감지
-          CURRENT_PID=$(pgrep -f 'java -jar.*\.jar' || pgrep -f .jar || true)
+          # 1. 현재 SSH 세션이나 쉘을 제외하고, 오직 순수 java -jar 실행 프로세스만 정밀 조회
+          CURRENT_PID=$(pgrep -f 'java -jar' | grep -v "$$" || true)
           
           if [ -z "$CURRENT_PID" ]; then
-            echo "현재 구동 중인 애플리케이션이 없습니다."
+            echo "현재 구동 중인 스프링 부트 애플리케이션이 없습니다."
           else
-            echo "구동 중인 프로세스 발견 (PIDs: $CURRENT_PID)"
-            # 여러 개의 PID가 공백으로 들어와도 안전하게 한 놈씩 순회하며 종료
+            echo "구동 중인 스프링 부트 프로세스 발견 (PIDs: $CURRENT_PID)"
             for pid in $CURRENT_PID; do
-              echo "프로세스 종료 시도 (PID: $pid)"
-              kill -15 $pid || true
+              echo "스프링 부트 프로세스 종료 시도 (PID: $pid)"
+              # 강제 종료가 아닌 정상 종료(-15)를 시도하되, 세션 유지를 위해 에러 처리를 완전히 차단
+              kill -15 $pid 2>/dev/null || true
             done
-            sleep 5
+            sleep 3
           fi
           
-          # 2. target 폴더 안에서 올라온 실행용 오리지널 JAR 파일 찾기
+          # 2. 실행할 새 JAR 파일 찾기 (오리지널 실행 파일만 지정)
           JAR_NAME=$(ls -tr *.jar 2>/dev/null | grep -v 'original' | grep -v 'plain' | tail -n 1 || true)
           
           if [ -z "$JAR_NAME" ]; then
@@ -75,7 +75,9 @@ jobs:
           echo "실행할 JAR 파일: $JAR_NAME"
           
           # 3. 백그라운드 구동 및 로그 저장
-          nohup java -jar $JAR_NAME > nohup.out 2>&1 &
+          # 대기 상태에서 세션이 붙잡히지 않도록 완전히 분리(stdout, stderr, stdin 모두 리다이렉트)
+          nohup java -jar $JAR_NAME > nohup.out 2>&1 < /dev/null &
           
-          # 4. 깃허브 Actions 세션이 영향받지 않도록 안전하게 종료 메시지 출력
+          # 4. 백그라운드 프로세스가 뜰 수 있도록 1초 대기 후 정상 종료 선언
+          sleep 1
           echo "🚀 새 애플리케이션이 백그라운드에서 정상 구동 명령을 받았습니다."
