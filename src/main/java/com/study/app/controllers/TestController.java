@@ -16,6 +16,6 @@ public class TestController {
 		
 		SimpleDateFormat sdf = new SimpleDateFormat("[yyyy.MM.dd] hh:mm:ss");
 		
-		return ResponseEntity.ok("Test04_Actions" + sdf.format(System.currentTimeMillis()));
+		return ResponseEntity.ok("Test05_Actions" + sdf.format(System.currentTimeMillis()));
 	}
 }
