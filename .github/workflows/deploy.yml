@@ -35,7 +35,7 @@ jobs:
         username: ${{ secrets.GCP_USERNAME }}
         key: ${{ secrets.GCP_SSH_KEY }}
         source: "target/*.jar"
-        target: "~/app/"           
+        target: "~/app"
         strip_components: 1
 
     # 5. GCP Debian VM에서 기존 프로세스 종료 후 새 JAR 실행 (SSH)
@@ -49,7 +49,7 @@ jobs:
           mkdir -p ~/app
           cd ~/app
           
-          # 1. 현재 SSH 세션이나 쉘을 제외하고, 오직 순수 java -jar 실행 프로세스만 정밀 조회
+          # 1. sudo로 실행된 자바 프로세스까지 포함하여 정밀 조회
           CURRENT_PID=$(pgrep -f 'java -jar' | grep -v "$$" || true)
           
           if [ -z "$CURRENT_PID" ]; then
@@ -58,13 +58,13 @@ jobs:
             echo "구동 중인 스프링 부트 프로세스 발견 (PIDs: $CURRENT_PID)"
             for pid in $CURRENT_PID; do
               echo "스프링 부트 프로세스 종료 시도 (PID: $pid)"
-              # 강제 종료가 아닌 정상 종료(-15)를 시도하되, 세션 유지를 위해 에러 처리를 완전히 차단
-              kill -15 $pid 2>/dev/null || true
+              # 기존 프로세스가 sudo로 켜졌을 수 있으므로 종료할 때도 sudo를 붙입니다.
+              sudo kill -15 $pid 2>/dev/null || true
             done
             sleep 3
           fi
           
-          # 2. 실행할 새 JAR 파일 찾기 (오리지널 실행 파일만 지정)
+          # 2. 실행할 새 JAR 파일 찾기
           JAR_NAME=$(ls -tr *.jar 2>/dev/null | grep -v 'original' | grep -v 'plain' | tail -n 1 || true)
           
           if [ -z "$JAR_NAME" ]; then
@@ -74,10 +74,10 @@ jobs:
           
           echo "실행할 JAR 파일: $JAR_NAME"
           
-          # 3. 백그라운드 구동 및 로그 저장
-          # 대기 상태에서 세션이 붙잡히지 않도록 완전히 분리(stdout, stderr, stdin 모두 리다이렉트)
-          nohup java -jar $JAR_NAME > nohup.out 2>&1 < /dev/null &
+          # 3. sudo를 사용한 백그라운드 구동 및 로그 저장
+          # ⚠️ sudo와 nohup을 같이 쓸 때는 전체 명령어를 bash -c ''로 감싸주어야 로그 유실과 리다이렉션 에러가 나지 않습니다.
+          sudo bash -c "nohup java -jar $JAR_NAME > nohup.out 2>&1 < /dev/null &"
           
-          # 4. 백그라운드 프로세스가 뜰 수 있도록 1초 대기 후 정상 종료 선언
+          # 4. 정상 종료 처리
           sleep 1
-          echo "🚀 새 애플리케이션이 백그라운드에서 정상 구동 명령을 받았습니다."
+          echo "🚀 새 애플리케이션이 관리자(sudo) 권한으로 백그라운드 구동 명령을 받았습니다."
