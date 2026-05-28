@@ -1,0 +1,65 @@
+name: Java CI/CD with Maven
+
+on:
+  push:
+    branches: [ "main" ] # 본인의 실제 GitHub 운영 브랜치 이름 (ex: master 또는 main)으로 맞춰주세요.
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest # 빌드용 가상 머신 (그대로 유지)
+
+    steps:
+    # 1. GitHub 저장소에서 코드 체크아웃
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # 2. JDK 17 세팅
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    # 3. Maven 빌드 (Gradle 대신 pom.xml 기반 패키징)
+    - name: Build with Maven
+      run: mvn clean package -DskipTests # 테스트를 포함하려면 -DskipTests 제외 가능
+
+    # 4. 빌드된 JAR 파일을 GCP Debian VM으로 전송 (SCP)
+    - name: Deliver JAR via SSH
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.GCP_HOST }}
+        username: ${{ secrets.GCP_USERNAME }}
+        key: ${{ secrets.GCP_SSH_KEY }}
+        source: "target/*.jar"     # Maven은 빌드 결과물이 target 폴더에 생성됩니다.
+        target: "~/app"            # GCP VM 내부에 JAR 파일이 전송될 경로
+        strip_components: 1        # target/ 경로를 제외하고 파일명만 전송하기 위함
+
+    # 5. GCP Debian VM에서 기존 프로세스 종료 후 새 JAR 실행 (SSH)
+    - name: Execute remote SSH commands
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.GCP_HOST }}
+        username: ${{ secrets.GCP_USERNAME }}
+        key: ${{ secrets.GCP_SSH_KEY }}
+        script: |
+          mkdir -p ~/app
+          cd ~/app
+          
+          # 기존 실행 중인 스프링 부트 프로세스 종료 (구동 중이 아니면 패스)
+          CURRENT_PID=$(pgrep -f 'java -jar.*\.jar')
+          if [ -z "$CURRENT_PID" ]; then
+            echo "현재 구동 중인 애플리케이션이 없습니다."
+          else
+            echo "기존 프로세스 종료 (PID: $CURRENT_PID)"
+            kill -15 $CURRENT_PID
+            sleep 5
+          fi
+          
+          # target 폴더 안에 생성되었던 오리지널 실행용 JAR 파일 찾기
+          # (혹시 .jar.original 같은 백업 파일이 생겨도 제외하기 위함)
+          JAR_NAME=$(ls -tr *.jar | grep -v 'original' | tail -n 1)
+          echo "실행할 JAR: $JAR_NAME"
+          
+          # 백그라운드 구동 및 로그 저장 (Debian 환경에서도 동일하게 작동)
+          nohup java -jar $JAR_NAME > nohup.out 2>&1 &
