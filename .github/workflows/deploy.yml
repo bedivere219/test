@@ -2,11 +2,15 @@ name: Java CI/CD with Maven
 
 on:
   push:
-    branches: [ "master" ] # 본인의 실제 GitHub 운영 브랜치 이름 (ex: master 또는 main)으로 맞춰주세요.
+    branches: [ "master" ] # 실제 사용 중이신 master 브랜치로 고정했습니다.
 
 jobs:
   build-and-deploy:
-    runs-on: ubuntu-latest # 빌드용 가상 머신 (그대로 유지)
+    runs-on: ubuntu-latest
+    
+    # Node.js 20 경고 메시지를 제거하는 설정입니다.
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
     # 1. GitHub 저장소에서 코드 체크아웃
@@ -20,9 +24,9 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    # 3. Maven 빌드 (Gradle 대신 pom.xml 기반 패키징)
+    # 3. Maven 빌드
     - name: Build with Maven
-      run: mvn clean package -DskipTests # 테스트를 포함하려면 -DskipTests 제외 가능
+      run: mvn clean package -DskipTests
 
     # 4. 빌드된 JAR 파일을 GCP Debian VM으로 전송 (SCP)
     - name: Deliver JAR via SSH
@@ -31,9 +35,9 @@ jobs:
         host: ${{ secrets.GCP_HOST }}
         username: ${{ secrets.GCP_USERNAME }}
         key: ${{ secrets.GCP_SSH_KEY }}
-        source: "target/*.jar"     # Maven은 빌드 결과물이 target 폴더에 생성됩니다.
-        target: "~/app"            # GCP VM 내부에 JAR 파일이 전송될 경로
-        strip_components: 1        # target/ 경로를 제외하고 파일명만 전송하기 위함
+        source: "target/*.jar"
+        target: "~/app"
+        strip_components: 1
 
     # 5. GCP Debian VM에서 기존 프로세스 종료 후 새 JAR 실행 (SSH)
     - name: Execute remote SSH commands
@@ -46,20 +50,30 @@ jobs:
           mkdir -p ~/app
           cd ~/app
           
-          # 기존 실행 중인 스프링 부트 프로세스 종료 (구동 중이 아니면 패스)
-          CURRENT_PID=$(pgrep -f 'java -jar.*\.jar')
+          # 1. 기존 실행 중인 스프興 부트 프로세스 확인 (가장 안전한 단순 문자열 검색)
+          CURRENT_PID=$(pgrep -f .jar || true)
+          
           if [ -z "$CURRENT_PID" ]; then
             echo "현재 구동 중인 애플리케이션이 없습니다."
           else
             echo "기존 프로세스 종료 (PID: $CURRENT_PID)"
-            kill -15 $CURRENT_PID
+            # kill -15 종료 시 깃허브가 에러로 오해하지 않도록 뒤에 || true를 붙여 방어합니다.
+            kill -15 $CURRENT_PID || true
             sleep 5
           fi
           
-          # target 폴더 안에 생성되었던 오리지널 실행용 JAR 파일 찾기
-          # (혹시 .jar.original 같은 백업 파일이 생겨도 제외하기 위함)
-          JAR_NAME=$(ls -tr *.jar | grep -v 'original' | tail -n 1)
-          echo "실행할 JAR: $JAR_NAME"
+          # 2. target 폴더 안에서 올라온 실행용 오리지널 JAR 파일 찾기
+          JAR_NAME=$(ls -tr *.jar 2>/dev/null | grep -v 'original' | grep -v 'plain' | tail -n 1 || true)
           
-          # 백그라운드 구동 및 로그 저장 (Debian 환경에서도 동일하게 작동)
+          if [ -z "$JAR_NAME" ]; then
+            echo "❌ 에러: ~/app 디렉토리에 실행할 JAR 파일이 존재하지 않습니다!"
+            exit 1
+          fi
+          
+          echo "실행할 JAR 파일: $JAR_NAME"
+          
+          # 3. 백그라운드 구동 및 로그 저장
           nohup java -jar $JAR_NAME > nohup.out 2>&1 &
+          
+          # 4. 백그라운드로 정상 양도되었음을 명시하여 깃허브 Actions를 깔끔하게 종료시킵니다.
+          echo "🚀 새 애플리케이션이 백그라운드에서 정상 구동 명령을 받았습니다."
