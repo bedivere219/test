@@ -35,7 +35,7 @@ jobs:
         username: ${{ secrets.GCP_USERNAME }}
         key: ${{ secrets.GCP_SSH_KEY }}
         source: "target/*.jar"
-        target: "~/app"
+        target: "~/app/"           
         strip_components: 1
 
     # 5. GCP Debian VM에서 기존 프로세스 종료 후 새 JAR 실행 (SSH)
